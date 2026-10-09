@@ -10,6 +10,16 @@ messages.json ──►[规则召回]──► candidates.json ──►[AI 精�
                   高召回、可复现                       高准确、抽字段
 ```
 
+## 本仓库包含两个技能
+
+| 目录 | 做什么 | 链接方式 |
+|------|--------|----------|
+| 仓库根（本 README 所述） | **通知提取**：从聊天里捞出「通知」，按 12 类打标并抽时间/地点/对象字段 | 消费统一的 `messages.json`（不自带导入） |
+| [`wechat-plan-table/`](wechat-plan-table/SKILL.md) | **计划表**：从聊天里抽出「待办 / 约定 / 承诺」，按截止时间排成可执行的 Excel 计划表 | 自带实测可用的本机微信导入链路（`weflow-cli` 分页读取） |
+
+两者互补：根目录的技能强在**分类与字段抽取**，`wechat-plan-table` 强在**端到端可跑**和
+**原话逐字校验**。若已有 `messages.json`，用根目录的技能；若要从本机微信直接读起，用子目录的技能。
+
 ## 为什么分两段
 
 纯规则会漏掉变体表达（「回头再说」这类没有关键词但实为约定的话）；
@@ -140,8 +150,14 @@ python scripts/build_table.py \
 │   ├── build_table.py            # 候选(+精判) → xlsx
 │   ├── xlsx_min.py               # 纯标准库 xlsx 写入器（无依赖回退）
 │   └── demo_data.py              # 合成测试数据
-└── tests/
-    └── test_pipeline.py          # 36 项单元 / 集成测试
+├── tests/
+│   └── test_pipeline.py          # 36 项单元 / 集成测试
+└── wechat-plan-table/            # 第二个技能：聊天记录 → 待办/约定计划表
+    ├── SKILL.md
+    └── scripts/
+        ├── read_messages.py      # weflow-cli 分页读取本机微信 → messages.json/txt
+        ├── verify_quotes.py      # 原话逐字校验闸门（多会话）
+        └── build_plan_xlsx.py    # 计划表 → 多 sheet xlsx
 ```
 
 ## 测试

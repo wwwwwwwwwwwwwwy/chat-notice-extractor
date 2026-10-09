@@ -1,0 +1,19 @@
+# 聊天记录与产物 —— 绝不提交
+data/
+out/
+wechat-plan/
+messages.json
+messages.txt
+commitments.json
+*.xlsx
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
