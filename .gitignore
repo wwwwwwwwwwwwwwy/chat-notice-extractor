@@ -1,0 +1,23 @@
+# 聊天数据与产物 —— 绝不提交
+data/
+out/
+demo/
+*.xlsx
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 凭据
+.env
+*.token
