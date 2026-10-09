@@ -71,6 +71,114 @@ weflow-cli export "<会话ID>" json --output "data/raw"
 导出文件通常为 `data/raw/<会话ID>_messages.json`。
 **群聊也要逐个会话导出** —— 想覆盖「全部会话」，需要对每个会话各导一次。
 
+#### ⚠️ weflow-cli 实测踩坑（微信 4.x / 多进程，2026-10 实测）
+
+以下均为实测结论，不是推测。复现时按此排查，可省大量时间。
+
+**1. 配置目录是 `~/.weflow-cli/`，不是 `~/.weflow/`**
+
+```bash
+ls -la ~/.weflow-cli/config.json      # 正确
+```
+
+`config.json` 中存有 `decryptKey` / `ntKey` / `contactKey` / `snsKey` 等，
+均为 `lock:` 前缀 —— 由 **DPAPI 保护**，外部无法取出明文密钥做独立校验。
+
+**2. `dbkey` 在非交互环境会静默卡死**
+
+它的捕获流程是交互式的，会停在确认提示上：
+
+```
+? 确认启动需要人工配合的数据库密钥捕获流程吗？ (y/N)
+```
+
+非交互环境下会一直等待直到超时，**输出里不会有任何错误提示**。
+必须显式加 `--yes`：
+
+```bash
+weflow-cli dbkey --force --yes --timeout 180000
+```
+
+可用 `--dry-run --json` 先预览，它会明确告知是否需要读进程内存：
+
+```json
+{"action":"dbkey.capture","interactiveRequired":true,"scansProcessMemory":true}
+```
+
+**3. 它等的是「数据库初始化事件」，不是普通写库**
+
+失败时的报错：
+
+```
+✗ 失败: 等待超时，未观察到数据库初始化事件
+```
+
+关键点：**微信 WAL 每秒都在更新，工具依然超时**。实测监测到
+`message_0.db`、`contact.db`、`session.db` 及各自 `-wal` 持续被写入
+（`-incremental.material` 也在刷新），但捕获仍报超时。
+
+→ 它等待的是**微信启动时首次打开数据库**这一特定事件。
+**光是让微信保持运行、持续收消息是不够的，必须完全退出微信再重新登录。**
+
+**4. 需要管理员权限（高概率）**
+
+`scansProcessMemory: true` 意味着要读另一个进程的内存。在非提权会话
+（`IsAdmin=False`）下这通常被拒绝。推荐组合：
+
+**管理员终端 + 重启微信**
+
+```powershell
+# 以管理员身份打开终端后
+weflow-cli init
+# 然后完全退出微信，重新登录，触发数据库初始化事件
+```
+
+**5. 如何判断密钥是否真的拿到了**
+
+不要只看 `init` 报告成功。用这两条命令验证：
+
+```bash
+weflow-cli sessions -n 5 --json
+weflow-cli contacts --json
+```
+
+若返回 `{"success":true,"sessions":[]}` / `{"success":true,"contacts":[]}` ——
+**命令成功但数据为空，说明密钥是未完成的占位值**，不是「微信里没有会话」。
+
+交叉验证手段：比对配置里的 salt 与库文件实际 salt。
+
+```python
+import json, os
+cfg = json.load(open(os.path.expanduser("~/.weflow-cli/config.json"), encoding="utf-8"))
+db = r"D:\微信\xwechat_files\<wxid>\db_storage\message\message_0.db"
+print("库文件 salt:", open(db, "rb").read(16).hex())
+print("配置 ntSalt :", cfg.get("ntSalt", ""))
+```
+
+两者**一致**只说明工具正确识别了目标库，**并不能**证明密钥有效。
+
+**6. 微信 4.x 的库路径与 3.x 不同**
+
+```
+4.x:  db_storage/message/message_0.db          # 单文件
+3.x:  message/message_N.db                     # 多文件，每联系人一张 Msg_{md5(wxid)} 表
+```
+
+4.x 走 WCDB/NT 连接（`ntDbPath` / `ntKey`），而 3.x 走 `dbPath3x` / `decryptKey3x`。
+`config show --json` 会给出 `dataVersion` 字段，据此判断走哪条路径。
+
+**7. WAL 可能远大于主库**
+
+实测：`session.db` 主库仅 152 KB，但 `session.db-wal` 达 **4.1 MB**。
+数据主要滞留在 WAL 中，未合并回主库。若自行解析库文件，
+**必须一并处理 `-wal`**，否则会读到几乎空的库。
+
+**8. 多进程微信**
+
+实测同时存在 5 个 `Weixin.exe`（主窗口 1 个 + 辅助 4 个）外加多个 `WeChatAppEx.exe`。
+这正是 CipherTalk「只 Hook 第一个进程」成为已知缺陷的原因，
+也是 weflow-cli 需要「扫描进程内存」而非「附加单进程」的原因。
+
 ### 2B. 回退：CipherTalk CLI
 
 当 weflow-cli 安装或初始化失败时使用。CipherTalk 通过官方
@@ -96,13 +204,28 @@ CLI 无法验证数据库但桌面版能完成账号配置时使用。桌面版�
 
 ### 2D. 解密后的库结构（转换器需要知道的事）
 
+**微信 4.x（WCDB / NT 连接）** —— 消息库为单文件：
+
 ```
 <账号目录>/db_storage/
 ├── contact/contact.db          # contact 表：username / nick_name / remark
+├── session/session.db          # 会话列表
+└── message/message_0.db        # 消息主体（单文件）
+```
+
+⚠️ 同目录下每个库都附带 `-wal` / `-shm` / `-first.material` / `-incremental.material` /
+`-last.material`。**`-wal` 可能远大于主库**（实测 `session.db` 152 KB 而
+`session.db-wal` 4.1 MB），自行解析时必须一并处理，否则读到几乎空的库。
+
+**微信 3.x（旧版）** —— 消息库按联系人分文件：
+
+```
+<账号目录>/db_storage/
+├── contact/contact.db
 └── message/message_N.db        # 每个联系人一张 Msg_{md5(username)} 表
 ```
 
-`Msg_*` 表列：
+`Msg_*` 表列（3.x）：
 
 | 列 | 含义 |
 |----|------|

@@ -205,3 +205,6 @@ QQ 走 NapCat + QQ Chat Exporter 的本地 REST API（默认 `127.0.0.1:40653`�
 | 表格打不开 / 中文乱码 | CSV 已用 UTF-8-BOM；若仍乱码请用 Excel 的「数据→从文本」并选 UTF-8 |
 | 时间显示不对 | `messages.json` 的时间戳应为**秒**；毫秒会被自动降级，若差 8 小时请检查时区（本技能按 UTC+8 展示） |
 | 语音/图片消息被跳过 | 属正常行为：非文字消息不参与通知抽取，除非数据源提供了 `transcript` |
+| `weflow-cli init` 报「等待超时，未观察到数据库初始化事件」 | 见 `references/import-pipeline.md` 的 weflow-cli 实测踩坑。要点：需**管理员终端**，且必须**完全退出微信再重新登录** —— 该工具等的是「启动时首次打开数据库」事件，普通持续写库不算 |
+| `weflow-cli sessions` 返回 `{"success":true,"sessions":[]}` | **不代表微信里没有会话**，而是密钥为未完成的占位值。用 `contacts --json` 交叉验证；两者都空即为密钥问题，重做密钥捕获 |
+| `weflow-cli dbkey` 无输出且长时间挂起 | 其捕获流程是交互式的，非交互环境会静默卡在 `(y/N)` 确认。必须加 `--yes` |
